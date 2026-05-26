@@ -7,7 +7,7 @@ const __dirname = dirname(__filename);
 
 // https://astro.build/config
 export default defineConfig({
-  site: 'https://anugrahks.dev/',
+  site: 'https://anugrahks19.github.io/',
 
   scopedStyleStrategy: 'class',
 

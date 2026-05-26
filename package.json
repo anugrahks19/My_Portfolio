@@ -9,7 +9,7 @@
   "bugs": {
     "url": "https://github.com/anugrahks19/My_Portfolio/issues"
   },
-  "homepage": "https://anugrahks.dev/",
+  "homepage": "https://anugrahks19.github.io/",
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",
