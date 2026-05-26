@@ -1,0 +1,386 @@
+---
+const { class: className } = Astro.props
+---
+
+<div class:list={['s__flow-container', className]}>
+  <canvas id="threeCanvas"></canvas>
+</div>
+
+<script>
+  import * as THREE from 'three'
+  import Emitter from '../utils/Emitter'
+
+  class FlowCanvas {
+    container: HTMLElement
+    canvasEl: HTMLCanvasElement
+    scene: THREE.Scene
+    simScene: THREE.Scene
+    camera: THREE.OrthographicCamera
+    renderer: THREE.WebGLRenderer
+    rtA: THREE.WebGLRenderTarget | null
+    rtB: THREE.WebGLRenderTarget | null
+    simMaterial: THREE.ShaderMaterial
+    renderMaterial: THREE.ShaderMaterial
+    textCanvas: HTMLCanvasElement
+    textCtx: CanvasRenderingContext2D
+    textTexture: THREE.CanvasTexture
+    mouse: THREE.Vector2
+    frame: number
+    starImg: HTMLImageElement
+    starLoaded: boolean
+
+    constructor() {
+      this.container = document.querySelector('.s__flow-container')
+      this.canvasEl = document.getElementById('threeCanvas') as HTMLCanvasElement
+      if (!this.canvasEl || !this.container) return
+
+      this.init()
+    }
+
+    init() {
+      this.scene = new THREE.Scene()
+      this.simScene = new THREE.Scene()
+      this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
+
+      this.renderer = new THREE.WebGLRenderer({
+        canvas: this.canvasEl,
+        antialias: true,
+        alpha: true,
+        preserveDrawingBuffer: true,
+      })
+
+      const width = this.container.clientWidth
+      const height = this.container.clientHeight
+      const dpr = Math.min(window.devicePixelRatio, 2)
+
+      this.renderer.setPixelRatio(dpr)
+      this.renderer.setSize(width, height)
+
+      this.mouse = new THREE.Vector2(-1, -1)
+      this.frame = 0
+
+      const options = {
+        format: THREE.RGBAFormat,
+        type: THREE.FloatType,
+        minFilter: THREE.LinearFilter,
+        magFilter: THREE.LinearFilter,
+        stencilBuffer: false,
+        depthBuffer: false,
+      }
+
+      this.rtA = new THREE.WebGLRenderTarget(width * dpr, height * dpr, options)
+      this.rtB = new THREE.WebGLRenderTarget(width * dpr, height * dpr, options)
+
+      this.simMaterial = new THREE.ShaderMaterial({
+        uniforms: {
+          textureA: { value: null },
+          mouse: { value: this.mouse },
+          resolution: { value: new THREE.Vector2(width * dpr, height * dpr) },
+          time: { value: 0 },
+          frame: { value: 0 },
+        },
+        vertexShader: `
+          varying vec2 vUv;
+          void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform sampler2D textureA;
+          uniform vec2 mouse;
+          uniform vec2 resolution;
+          uniform float time;
+          uniform int frame;
+          varying vec2 vUv;
+
+          const float delta = 1.4;
+
+          void main() {
+            vec2 uv = vUv;
+            if (frame == 0) {
+                gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
+                return;
+            }
+            
+            vec4 data = texture2D(textureA, uv);
+            float pressure = data.x;
+            float pVel = data.y;
+            
+            vec2 texelSize = 1.0 / resolution;
+            float p_right = texture2D(textureA, uv + vec2(texelSize.x, 0.0)).x;
+            float p_left = texture2D(textureA, uv + vec2(-texelSize.x, 0.0)).x;
+            float p_up = texture2D(textureA, uv + vec2(0.0, texelSize.y)).x;
+            float p_down = texture2D(textureA, uv + vec2(0.0, -texelSize.y)).x;
+            
+            pVel += delta * (-2.0 * pressure + p_right + p_left) / 4.0;
+            pVel += delta * (-2.0 * pressure + p_up + p_down) / 4.0;
+            
+            pressure += delta * pVel;
+            pVel -= 0.005 * delta * pressure;
+            pVel *= 1.0 - 0.002 * delta;
+            pressure *= 0.999;
+            
+            vec2 mouseUV = mouse / resolution;
+            if(mouse.x > 0.0) {
+                float dist = distance(uv, mouseUV);
+                if(dist <= 0.02) {
+                    pressure += 2.0 * (1.0 - dist / 0.02);
+                }
+            }
+            
+            gl_FragColor = vec4(pressure, pVel, 
+                (p_right - p_left) / 2.0, 
+                (p_up - p_down) / 2.0);
+          }
+        `,
+      })
+
+      this.renderMaterial = new THREE.ShaderMaterial({
+        uniforms: {
+          textureA: { value: null },
+          textureB: { value: null },
+        },
+        vertexShader: `
+          varying vec2 vUv;
+          void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform sampler2D textureA;
+          uniform sampler2D textureB;
+          varying vec2 vUv;
+
+          void main() {
+            vec4 data = texture2D(textureA, vUv);
+            vec2 distortion = 0.3 * data.zw;
+            vec4 textColor = texture2D(textureB, vUv + distortion);
+            gl_FragColor = textColor;
+          }
+        `,
+        transparent: true,
+      })
+
+      const plane = new THREE.PlaneGeometry(2, 2)
+      const simQuad = new THREE.Mesh(plane, this.simMaterial)
+      const renderQuad = new THREE.Mesh(plane, this.renderMaterial)
+
+      this.simScene.add(simQuad)
+      this.scene.add(renderQuad)
+
+      this.textCanvas = document.createElement('canvas')
+      this.textCtx = this.textCanvas.getContext('2d', { alpha: true })!
+
+      this.textTexture = new THREE.CanvasTexture(this.textCanvas)
+      this.textTexture.minFilter = THREE.LinearFilter
+      this.textTexture.magFilter = THREE.LinearFilter
+      this.textTexture.format = THREE.RGBAFormat
+
+      this.updateSizes()
+
+      window.addEventListener('resize', this.updateSizes.bind(this))
+
+      // Redraw canvas dynamically when theme/custom colors are updated
+      Emitter.on('contrastchange', () => {
+        this.updateSizes()
+      })
+
+      // Sync mouse movements with AWaves by listening to global Emitter mousemove
+      Emitter.on('mousemove', (x: number, y: number) => {
+        const rect = this.canvasEl.getBoundingClientRect()
+        const relativeX = x - rect.left
+        const relativeY = y - rect.top
+
+        this.mouse.x = relativeX * (rect.width > 0 ? (this.canvasEl.width / rect.width) : 1)
+        this.mouse.y = (rect.height - relativeY) * (rect.height > 0 ? (this.canvasEl.height / rect.height) : 1)
+      })
+
+      // Also support direct pointermove on container as backup
+      this.container.addEventListener('mousemove', (e) => {
+        const rect = this.canvasEl.getBoundingClientRect()
+        const x = e.clientX - rect.left
+        const y = e.clientY - rect.top
+        
+        this.mouse.x = x * (rect.width > 0 ? (this.canvasEl.width / rect.width) : 1)
+        this.mouse.y = (rect.height - y) * (rect.height > 0 ? (this.canvasEl.height / rect.height) : 1)
+      })
+
+      this.container.addEventListener('mouseleave', () => {
+        this.mouse.set(-1, -1)
+      })
+
+      this.animate()
+    }
+
+    updateSizes() {
+      const width = this.container.clientWidth
+      const height = this.container.clientHeight
+      const dpr = Math.min(window.devicePixelRatio, 2)
+
+      this.renderer.setPixelRatio(dpr)
+      this.renderer.setSize(width, height)
+
+      const renderWidth = width * dpr
+      const renderHeight = height * dpr
+
+      if (this.rtA) this.rtA.dispose()
+      if (this.rtB) this.rtB.dispose()
+
+      const options = {
+        format: THREE.RGBAFormat,
+        type: THREE.FloatType,
+        minFilter: THREE.LinearFilter,
+        magFilter: THREE.LinearFilter,
+        stencilBuffer: false,
+        depthBuffer: false,
+      }
+
+      this.rtA = new THREE.WebGLRenderTarget(renderWidth, renderHeight, options)
+      this.rtB = new THREE.WebGLRenderTarget(renderWidth, renderHeight, options)
+
+      this.simMaterial.uniforms.resolution.value.set(renderWidth, renderHeight)
+
+      this.textCanvas.width = renderWidth
+      this.textCanvas.height = renderHeight
+      this.textCtx.clearRect(0, 0, renderWidth, renderHeight)
+
+      // Fetch dynamic colors from active CSS variables
+      const primaryColor = getComputedStyle(document.documentElement).getPropertyValue('--color-primary').trim() || '#ffffff'
+      const secondaryColor = getComputedStyle(document.documentElement).getPropertyValue('--color-secondary').trim() || '#160000'
+
+      const hexToRgba = (hex: string, alpha: number) => {
+        let c = hex.trim()
+        if (c.startsWith('#')) c = c.substring(1)
+        if (c.length === 3) {
+          c = c[0] + c[0] + c[1] + c[1] + c[2] + c[2]
+        }
+        const r = parseInt(c.substring(0, 2), 16)
+        const g = parseInt(c.substring(2, 4), 16)
+        const b = parseInt(c.substring(4, 6), 16)
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`
+      }
+
+      // Brand background name ANUGRAH K S drawn in a huge, bold upright brand font (no italics)
+      // Base scale on 75% of height to make it massive and fill the vertical space!
+      let fontSize = height * 0.75 * dpr
+      this.textCtx.font = `700 ${fontSize}px 'Bigger Display', sans-serif`
+      this.textCtx.textAlign = 'center'
+      this.textCtx.textBaseline = 'middle'
+
+      const text = 'ANUGRAH K S'
+      let textWidth = this.textCtx.measureText(text).width
+
+      // If too wide for the canvas column, scale it down to fit perfectly
+      if (textWidth > renderWidth * 0.95) {
+        const scale = (renderWidth * 0.95) / textWidth
+        fontSize = fontSize * scale
+        this.textCtx.font = `700 ${fontSize}px 'Bigger Display', sans-serif`
+        textWidth = this.textCtx.measureText(text).width
+      }
+
+      const startX = (renderWidth - textWidth) / 2
+      const centerY = renderHeight / 2 + fontSize * 0.05 // Shift slightly downwards for perfect visual alignment
+
+      // Create a gorgeous 2D soft-focused fading mask around the text.
+      // Horizontal Fade: soft and wide (120 * dpr) so waves fade in smoothly towards the text.
+      const fadeWidth = 120 * dpr
+      const solidStart = Math.max(0, startX + 15 * dpr)
+      const solidEnd = Math.min(renderWidth, startX + textWidth - 15 * dpr)
+      const fadeStart = Math.max(0, solidStart - fadeWidth)
+      const fadeEnd = Math.min(renderWidth, solidEnd + fadeWidth)
+
+      const maskGrad = this.textCtx.createLinearGradient(0, 0, renderWidth, 0)
+      maskGrad.addColorStop(0, hexToRgba(primaryColor, 0))
+      if (fadeStart > 0) maskGrad.addColorStop(fadeStart / renderWidth, hexToRgba(primaryColor, 0))
+      maskGrad.addColorStop(solidStart / renderWidth, primaryColor)
+      maskGrad.addColorStop(solidEnd / renderWidth, primaryColor)
+      if (fadeEnd < renderWidth) maskGrad.addColorStop(fadeEnd / renderWidth, hexToRgba(primaryColor, 0))
+      maskGrad.addColorStop(1, hexToRgba(primaryColor, 0))
+
+      // Vertical Fade: Keep background directly behind letters solid, but allow waves to flow
+      // slightly above and below the text with a soft fade to transparent.
+      const solidHeight = fontSize * 0.95
+      const solidTop = centerY - solidHeight / 2
+      const solidBottom = centerY + solidHeight / 2
+      const vFadeHeight = fontSize * 0.6
+      const fadeTop = Math.max(0, solidTop - vFadeHeight)
+      const fadeBottom = Math.min(renderHeight, solidBottom + vFadeHeight)
+
+      const vGrad = this.textCtx.createLinearGradient(0, 0, 0, renderHeight)
+      vGrad.addColorStop(0, hexToRgba(primaryColor, 0))
+      if (fadeTop > 0) vGrad.addColorStop(fadeTop / renderHeight, hexToRgba(primaryColor, 0))
+      vGrad.addColorStop(solidTop / renderHeight, primaryColor)
+      vGrad.addColorStop(solidBottom / renderHeight, primaryColor)
+      if (fadeBottom < renderHeight) vGrad.addColorStop(fadeBottom / renderHeight, hexToRgba(primaryColor, 0))
+      vGrad.addColorStop(1, hexToRgba(primaryColor, 0))
+
+      // Enable a soft Gaussian blur filter on the context to completely dissolve any boxy/rectangular edges
+      const blurRadius = Math.round(25 * dpr)
+      this.textCtx.filter = `blur(${blurRadius}px)`
+
+      // 1. Draw horizontal mask
+      this.textCtx.fillStyle = maskGrad
+      this.textCtx.fillRect(0, 0, renderWidth, renderHeight)
+
+      // 2. Intersect with vertical mask to create a premium soft-focused pill shape
+      this.textCtx.globalCompositeOperation = 'destination-in'
+      this.textCtx.fillStyle = vGrad
+      this.textCtx.fillRect(0, 0, renderWidth, renderHeight)
+
+      // 3. Restore default drawing mode and disable blur for text rendering
+      this.textCtx.globalCompositeOperation = 'source-over'
+      this.textCtx.filter = 'none'
+
+      // We fill with bold brand typography color
+      this.textCtx.fillStyle = secondaryColor
+      this.textCtx.fillText(text, renderWidth / 2, centerY)
+
+      this.textTexture.needsUpdate = true
+    }
+
+    animate() {
+      if (!this.rtA || !this.rtB) return
+
+      this.simMaterial.uniforms.frame.value = this.frame++
+      this.simMaterial.uniforms.time.value = performance.now() / 1000
+
+      this.simMaterial.uniforms.textureA.value = this.rtA.texture
+      this.renderer.setRenderTarget(this.rtB)
+      this.renderer.render(this.simScene, this.camera)
+
+      this.renderMaterial.uniforms.textureA.value = this.rtB.texture
+      this.renderMaterial.uniforms.textureB.value = this.textTexture
+      this.renderer.setRenderTarget(null)
+      this.renderer.render(this.scene, this.camera)
+
+      const temp = this.rtA
+      this.rtA = this.rtB
+      this.rtB = temp
+
+      requestAnimationFrame(this.animate.bind(this))
+    }
+  }
+
+  // Guarantee fonts are fully loaded for precise typography scaling
+  if (document.readyState === 'complete') {
+    document.fonts.ready.then(() => new FlowCanvas())
+  } else {
+    window.addEventListener('load', () => {
+      document.fonts.ready.then(() => new FlowCanvas())
+    })
+  }
+</script>
+
+<style lang="scss">
+  .s__flow-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 1;
+    pointer-events: auto; /* Allow direct pointer distortion */
+  }
+</style>

@@ -1,0 +1,30 @@
+{
+  "name": "anugrahks-portfolio",
+  "type": "module",
+  "version": "0.0.1",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anugrahks19/My_Portfolio.git"
+  },
+  "bugs": {
+    "url": "https://github.com/anugrahks19/My_Portfolio/issues"
+  },
+  "homepage": "https://anugrahks.dev/",
+  "scripts": {
+    "dev": "astro dev",
+    "start": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "@types/three": "^0.184.1",
+    "astro": "^5.7.13",
+    "autoprefixer": "^10.4.21",
+    "gsap": "^3.13.0",
+    "lenis": "^1.3.3",
+    "modern-normalize": "^3.0.1",
+    "sass": "^1.89.0",
+    "three": "^0.184.0"
+  }
+}

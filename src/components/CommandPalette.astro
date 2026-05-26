@@ -1,0 +1,606 @@
+---
+// Holographic Command Palette Component
+---
+
+<div class="cmd-palette js-cmd-palette" aria-hidden="true" role="dialog" aria-labelledby="cmd-title">
+  <div class="cmd-palette__backdrop js-cmd-close"></div>
+  
+  <div class="cmd-palette__modal">
+    <div class="cmd-palette__scanline"></div>
+    
+    <div class="cmd-palette__header">
+      <span class="cmd-palette__prompt">&gt;_</span>
+      <input 
+        type="text" 
+        class="cmd-palette__input js-cmd-input" 
+        placeholder="Type a command or select one below..."
+        autocomplete="off"
+        spellcheck="false"
+        id="cmd-input"
+      />
+      <kbd class="cmd-palette__esc-tag">ESC</kbd>
+    </div>
+
+    <div class="cmd-palette__body">
+      <div class="cmd-palette__section-title">Navigation Shortcuts</div>
+      <ul class="cmd-palette__list js-cmd-list">
+        <li class="cmd-palette__item js-cmd-item" data-command="/about" data-action="navigate" data-target="#about">
+          <span class="cmd-palette__cmd-name">/about</span>
+          <span class="cmd-palette__cmd-desc">Smooth scroll to the About & Bio section</span>
+        </li>
+        <li class="cmd-palette__item js-cmd-item" data-command="/work" data-action="navigate" data-target="#work">
+          <span class="cmd-palette__cmd-name">/work</span>
+          <span class="cmd-palette__cmd-desc">Browse selected creative and technical works</span>
+        </li>
+        <li class="cmd-palette__item js-cmd-item" data-command="/contact" data-action="navigate" data-target="#contact">
+          <span class="cmd-palette__cmd-name">/contact</span>
+          <span class="cmd-palette__cmd-desc">Get in touch for freelance and partnerships</span>
+        </li>
+      </ul>
+
+      <div class="cmd-palette__section-title">Visual Themes</div>
+      <ul class="cmd-palette__list js-cmd-list">
+        <li class="cmd-palette__item js-cmd-item" data-command="/theme carbon" data-action="theme" data-value="theme-carbon">
+          <span class="cmd-palette__cmd-name">/theme carbon</span>
+          <span class="cmd-palette__cmd-desc">Switch to Carbon Dark & Neon Cyan</span>
+        </li>
+        <li class="cmd-palette__item js-cmd-item" data-command="/theme indigo" data-action="theme" data-value="theme-indigo">
+          <span class="cmd-palette__cmd-name">/theme indigo</span>
+          <span class="cmd-palette__cmd-desc">Switch to Midnight Indigo & Purple</span>
+        </li>
+        <li class="cmd-palette__item js-cmd-item" data-command="/theme teal" data-action="theme" data-value="theme-teal">
+          <span class="cmd-palette__cmd-name">/theme teal</span>
+          <span class="cmd-palette__cmd-desc">Switch to Cyberpunk Emerald & Teal</span>
+        </li>
+        <li class="cmd-palette__item js-cmd-item" data-command="/theme crimson" data-action="theme" data-value="theme-crimson">
+          <span class="cmd-palette__cmd-name">/theme crimson</span>
+          <span class="cmd-palette__cmd-desc">Switch to Classic Soft Crimson Red</span>
+        </li>
+      </ul>
+
+      <div class="cmd-palette__section-title">Utility & Tricks</div>
+      <ul class="cmd-palette__list js-cmd-list">
+        <li class="cmd-palette__item js-cmd-item" data-command="/resume" data-action="resume">
+          <span class="cmd-palette__cmd-name">/resume</span>
+          <span class="cmd-palette__cmd-desc">Download CV / Professional Resume</span>
+        </li>
+        <li class="cmd-palette__item js-cmd-item" data-command="/matrix" data-action="matrix">
+          <span class="cmd-palette__cmd-name">/matrix</span>
+          <span class="cmd-palette__cmd-desc">Initialize interactive digital rain on background</span>
+        </li>
+      </ul>
+    </div>
+
+    <div class="cmd-palette__footer">
+      <span>Use <kbd>↑</kbd> <kbd>↓</kbd> to navigate, <kbd>Enter</kbd> to select, <kbd>ESC</kbd> to close.</span>
+    </div>
+  </div>
+</div>
+
+<div class="matrix-canvas-wrapper js-matrix-wrapper" style="display:none;">
+  <canvas class="matrix-canvas js-matrix-canvas"></canvas>
+  <button class="matrix-close-btn js-matrix-close" type="button" title="Close Matrix Rain">✕</button>
+</div>
+
+<script>
+  import Emitter from '../utils/Emitter'
+  import { gsap } from 'gsap'
+
+  class CommandPalette {
+    el: HTMLElement
+    input: HTMLInputElement
+    items: NodeListOf<HTMLElement>
+    closeTriggers: NodeListOf<HTMLElement>
+    isOpen: boolean
+    selectedIndex: number
+    visibleItems: HTMLElement[]
+
+    // Matrix properties
+    matrixWrapper: HTMLElement
+    matrixCanvas: HTMLCanvasElement
+    matrixCtx: CanvasRenderingContext2D
+    matrixActive: boolean
+    matrixInterval: any
+
+    constructor() {
+      this.el = document.querySelector('.js-cmd-palette')
+      this.input = this.el.querySelector('.js-cmd-input')
+      this.items = this.el.querySelectorAll('.js-cmd-item')
+      this.closeTriggers = document.querySelectorAll('.js-cmd-close')
+      
+      this.isOpen = false
+      this.selectedIndex = 0
+      this.visibleItems = Array.from(this.items)
+
+      // Matrix
+      this.matrixWrapper = document.querySelector('.js-matrix-wrapper')
+      this.matrixCanvas = document.querySelector('.js-matrix-canvas')
+      this.matrixCtx = this.matrixCanvas.getContext('2d')
+      this.matrixActive = false
+
+      this.init()
+    }
+
+    init() {
+      this.bindEvents()
+      this.updateSelection()
+    }
+
+    bindEvents() {
+      // Toggle Events
+      Emitter.on('openCommandPalette', this.open.bind(this))
+
+      // Shortcut Hooks
+      window.addEventListener('keydown', (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+          e.preventDefault()
+          this.toggle()
+        }
+        if (e.key === '/' && !this.isOpen && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+          e.preventDefault()
+          this.open()
+        }
+        if (e.key === 'Escape' && this.isOpen) {
+          this.close()
+        }
+      })
+
+      // Clicking Backdrop / Close Buttons
+      this.closeTriggers.forEach((trigger) => {
+        trigger.addEventListener('click', this.close.bind(this))
+      })
+
+      // Input Search Filtering
+      this.input.addEventListener('input', this.handleSearch.bind(this))
+
+      // Arrow Key & Enter Navigation inside Modal
+      this.input.addEventListener('keydown', this.handleKeys.bind(this))
+
+      // Clicking directly on items
+      this.items.forEach((item) => {
+        item.addEventListener('click', () => {
+          this.executeItem(item)
+        })
+      })
+
+      // Matrix Close
+      const mClose = document.querySelector('.js-matrix-close')
+      if (mClose) {
+        mClose.addEventListener('click', this.stopMatrix.bind(this))
+      }
+    }
+
+    toggle() {
+      this.isOpen ? this.close() : this.open()
+    }
+
+    open() {
+      if (this.isOpen) return
+      this.isOpen = true
+      this.el.setAttribute('aria-hidden', 'false')
+      this.el.classList.add('is-open')
+      this.input.value = ''
+      this.handleSearch()
+      
+      gsap.fromTo(this.el.querySelector('.cmd-palette__modal'), 
+        { scale: 0.95, opacity: 0, y: '-20px' },
+        { scale: 1, opacity: 1, y: '0px', duration: 0.4, ease: 'power4.out', onComplete: () => {
+          this.input.focus()
+        }}
+      )
+      gsap.to(this.el.querySelector('.cmd-palette__backdrop'), { opacity: 1, duration: 0.3 })
+    }
+
+    close() {
+      if (!this.isOpen) return
+      this.isOpen = false
+      this.el.setAttribute('aria-hidden', 'true')
+      
+      gsap.to(this.el.querySelector('.cmd-palette__modal'), { 
+        scale: 0.95, opacity: 0, y: '-20px', duration: 0.3, ease: 'power4.in', onComplete: () => {
+          this.el.classList.remove('is-open')
+        }
+      })
+      gsap.to(this.el.querySelector('.cmd-palette__backdrop'), { opacity: 0, duration: 0.3 })
+    }
+
+    handleSearch() {
+      const filter = this.input.value.toLowerCase().trim()
+      this.visibleItems = []
+
+      this.items.forEach((item) => {
+        const cmd = item.dataset.command.toLowerCase()
+        const desc = item.querySelector('.cmd-palette__cmd-desc').textContent.toLowerCase()
+
+        if (cmd.includes(filter) || desc.includes(filter)) {
+          item.style.display = ''
+          this.visibleItems.push(item)
+        } else {
+          item.style.display = 'none'
+        }
+      })
+
+      // Reset selection indices
+      this.selectedIndex = 0
+      this.updateSelection()
+    }
+
+    handleKeys(e: KeyboardEvent) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        this.selectedIndex = (this.selectedIndex + 1) % this.visibleItems.length
+        this.updateSelection()
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        this.selectedIndex = (this.selectedIndex - 1 + this.visibleItems.length) % this.visibleItems.length
+        this.updateSelection()
+      } else if (e.key === 'Enter') {
+        e.preventDefault()
+        if (this.visibleItems[this.selectedIndex]) {
+          this.executeItem(this.visibleItems[this.selectedIndex])
+        }
+      }
+    }
+
+    updateSelection() {
+      this.items.forEach((item) => item.classList.remove('is-selected'))
+      
+      if (this.visibleItems[this.selectedIndex]) {
+        const selected = this.visibleItems[this.selectedIndex]
+        selected.classList.add('is-selected')
+        selected.scrollIntoView({ block: 'nearest' })
+      }
+    }
+
+    executeItem(item: HTMLElement) {
+      const action = item.dataset.action
+      const val = item.dataset.value
+      const target = item.dataset.target
+
+      this.close()
+
+      if (action === 'navigate' && target) {
+        setTimeout(() => {
+          window.lenis.scrollTo(target, {
+            duration: 1.5,
+            easing: (t) => t < 0.5 ? 16 * t * t * t * t * t : 1 + 16 * --t * t * t * t * t,
+          })
+        }, 100)
+      } else if (action === 'theme' && val) {
+        this.switchTheme(val)
+      } else if (action === 'resume') {
+        this.downloadResume()
+      } else if (action === 'matrix') {
+        this.startMatrix()
+      }
+    }
+
+    switchTheme(themeClass: string) {
+      const themes = ['theme-carbon', 'theme-indigo', 'theme-teal', 'theme-crimson']
+      themes.forEach((t) => document.documentElement.classList.remove(t))
+      document.documentElement.classList.add(themeClass)
+      
+      // Update local storage to persist theme choice
+      localStorage.setItem('portfolio-theme', themeClass)
+
+      Emitter.emit('contrastchange', themeClass)
+    }
+
+    downloadResume() {
+      const link = document.createElement('a')
+      link.href = '/assets/resume.pdf'
+      link.download = 'Anugrah_KS_Resume.pdf'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+    }
+
+    // Interactive Easter Egg Matrix Rain
+    startMatrix() {
+      this.matrixWrapper.style.display = 'block'
+      this.matrixActive = true
+      this.resizeMatrix()
+
+      window.addEventListener('resize', this.resizeMatrix.bind(this))
+
+      const cols = Math.floor(this.matrixCanvas.width / 16) + 1
+      const ypos = Array(cols).fill(0)
+
+      this.matrixCtx.fillStyle = '#000'
+      this.matrixCtx.fillRect(0, 0, this.matrixCanvas.width, this.matrixCanvas.height)
+
+      const draw = () => {
+        this.matrixCtx.fillStyle = 'rgba(0, 0, 0, 0.05)'
+        this.matrixCtx.fillRect(0, 0, this.matrixCanvas.width, this.matrixCanvas.height)
+
+        const activeThemeColor = getComputedStyle(document.documentElement).getPropertyValue('--color-primary').trim()
+        this.matrixCtx.fillStyle = activeThemeColor || '#00f3ff'
+        this.matrixCtx.font = '15px monospace'
+
+        ypos.forEach((y, ind) => {
+          const text = String.fromCharCode(Math.random() * 128)
+          const x = ind * 16
+          this.matrixCtx.fillText(text, x, y)
+          if (y > 100 + Math.random() * 10000) {
+            ypos[ind] = 0
+          } else {
+            ypos[ind] = y + 16
+          }
+        })
+      }
+
+      if (this.matrixInterval) clearInterval(this.matrixInterval)
+      this.matrixInterval = setInterval(draw, 33)
+    }
+
+    stopMatrix() {
+      this.matrixActive = false
+      this.matrixWrapper.style.display = 'none'
+      if (this.matrixInterval) {
+        clearInterval(this.matrixInterval)
+      }
+      window.removeEventListener('resize', this.resizeMatrix.bind(this))
+    }
+
+    resizeMatrix() {
+      if (!this.matrixActive) return
+      this.matrixCanvas.width = window.innerWidth
+      this.matrixCanvas.height = window.innerHeight
+    }
+  }
+
+  // Load Palette
+  new CommandPalette()
+</script>
+
+<style lang="scss">
+  .cmd-palette {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 9999;
+    
+    width: 100%;
+    height: 100%;
+    
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+
+    &.is-open {
+      display: flex;
+    }
+
+    &__backdrop {
+      position: absolute;
+      top: 0;
+      left: 0;
+      
+      width: 100%;
+      height: 100%;
+      
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(16px);
+      opacity: 0;
+    }
+
+    &__modal {
+      position: relative;
+      z-index: 2;
+      
+      width: 100%;
+      max-width: 38rem;
+      max-height: 28rem;
+      
+      display: flex;
+      flex-direction: column;
+      
+      background: color-mix(in srgb, color(secondary) 95%, transparent);
+      border: 1px solid color(secondary);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5), 0 0 20px color-mix(in srgb, color(primary) 15%, transparent);
+      border-radius: 8px;
+      overflow: hidden;
+      opacity: 0;
+      transform: scale(0.95) translateY(-20px);
+    }
+
+    &__scanline {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(
+        rgba(18, 16, 16, 0) 50%, 
+        rgba(0, 0, 0, 0.25) 50%
+      );
+      background-size: 100% 4px;
+      z-index: 5;
+      pointer-events: none;
+    }
+
+    &__header {
+      display: flex;
+      align-items: center;
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid color(secondary);
+      background: color-mix(in srgb, color(secondary) 30%, transparent);
+    }
+
+    &__prompt {
+      font-family: font-family(fraktion);
+      font-size: 18px;
+      font-weight: 700;
+      color: color(primary);
+      margin-right: 0.75rem;
+    }
+
+    &__input {
+      flex: 1;
+      background: none;
+      border: 0;
+      outline: none;
+      color: color(primary);
+      font-family: font-family(fraktion);
+      font-size: 15px;
+      font-weight: 400;
+      caret-color: color(primary);
+      
+      &::placeholder {
+        color: color(primary);
+        opacity: 0.4;
+      }
+    }
+
+    &__esc-tag {
+      font-family: font-family(fraktion);
+      font-size: 9px;
+      font-weight: 700;
+      padding: 2px 6px;
+      background: color-mix(in srgb, color(secondary) 50%, transparent);
+      border: 1px solid color(secondary);
+      color: color(primary);
+      opacity: 0.6;
+      border-radius: 4px;
+    }
+
+    &__body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem 0;
+      max-height: 20rem;
+    }
+
+    &__section-title {
+      font-family: font-family(fraktion);
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: color(primary);
+      opacity: 0.5;
+      padding: 0.5rem 1.5rem;
+      margin-top: 0.5rem;
+
+      &:first-child {
+        margin-top: 0;
+      }
+    }
+
+    &__list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+
+    &__item {
+      display: flex;
+      flex-direction: column;
+      padding: 0.65rem 1.5rem;
+      cursor: pointer;
+      border-left: 3px solid transparent;
+      transition: all 0.2s ease;
+
+      &.is-selected {
+        background: color-mix(in srgb, color(primary) 8%, transparent);
+        border-left-color: color(primary);
+        
+        .cmd-palette__cmd-name {
+          color: color(primary);
+          text-shadow: 0 0 8px color-mix(in srgb, color(primary) 50%, transparent);
+        }
+        
+        .cmd-palette__cmd-desc {
+          color: color(primary);
+          opacity: 0.9;
+        }
+      }
+    }
+
+    &__cmd-name {
+      font-family: font-family(fraktion);
+      font-size: 13px;
+      font-weight: 700;
+      color: color(primary);
+      opacity: 0.85;
+      margin-bottom: 0.15rem;
+      transition: color 0.2s ease;
+    }
+
+    &__cmd-desc {
+      font-family: font-family(fraktion);
+      font-size: 11px;
+      color: color(primary);
+      opacity: 0.5;
+      transition: color 0.2s ease;
+    }
+
+    &__footer {
+      padding: 0.75rem 1.5rem;
+      border-top: 1px solid color(secondary);
+      background: color-mix(in srgb, color(secondary) 30%, transparent);
+      font-family: font-family(fraktion);
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: color(primary);
+      opacity: 0.4;
+      display: flex;
+      justify-content: space-between;
+
+      kbd {
+        background: color-mix(in srgb, color(secondary) 50%, transparent);
+        border: 1px solid color(secondary);
+        padding: 1px 4px;
+        border-radius: 3px;
+      }
+    }
+  }
+
+  // Interactive Easter Egg Matrix
+  .matrix-canvas-wrapper {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 100000;
+    width: 100%;
+    height: 100%;
+    background: #000;
+
+    .matrix-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    .matrix-close-btn {
+      position: absolute;
+      top: 1.5rem;
+      right: 1.5rem;
+      z-index: 10;
+      
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 3rem;
+      height: 3rem;
+      
+      background: rgba(0, 0, 0, 0.75);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #fff;
+      font-size: 1.25rem;
+      border-radius: 50%;
+      cursor: pointer;
+      
+      transition: all 0.3s ease;
+
+      &:hover {
+        background: #fff;
+        color: #000;
+        border-color: #fff;
+        transform: rotate(90deg);
+      }
+    }
+  }
+</style>

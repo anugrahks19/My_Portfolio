@@ -1,0 +1,43 @@
+/**
+ * Colors variables
+ */
+@use "sass:map";
+@use "../variables-scss/colors" as *;
+
+/* CSS properties */
+:root {
+  // Colors (Default is Carbon theme)
+  @each $variable, $color in map.get($theme-colors, 'default') {
+    --color-#{"" + $variable}: #{$color};
+  }
+}
+
+.theme-carbon {
+  @each $variable, $color in map.get($theme-colors, 'default') {
+    --color-#{"" + $variable}: #{$color};
+  }
+}
+
+.theme-indigo {
+  @each $variable, $color in map.get($theme-colors, 'indigo') {
+    --color-#{"" + $variable}: #{$color};
+  }
+}
+
+.theme-teal {
+  @each $variable, $color in map.get($theme-colors, 'teal') {
+    --color-#{"" + $variable}: #{$color};
+  }
+}
+
+.theme-crimson {
+  @each $variable, $color in map.get($theme-colors, 'crimson') {
+    --color-#{"" + $variable}: #{$color};
+  }
+}
+
+.theme-contrasted {
+  @each $variable, $color in map.get($theme-colors, 'contrasted') {
+    --color-#{"" + $variable}: #{$color};
+  }
+}
