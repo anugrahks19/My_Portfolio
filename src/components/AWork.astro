@@ -37,6 +37,7 @@ const imgSrc = typeof src === 'object' && src !== null ? src.default?.src || src
       <div class="a__caption">
         <div class="a__caption__text">
           {caption}
+          {site.includes(".onrender.com") && <span class="a__loading-note">Hosted on Render · Initial load may take a moment</span>}
         </div><!-- .a__caption__text -->
 
         <div class="a__caption__key">
@@ -173,6 +174,13 @@ const imgSrc = typeof src === 'object' && src !== null ? src.default?.src || src
         max-width: 80vw;
         max-height: 80vh;
       }
+    }
+
+    .a__loading-note {
+      display: block;
+      margin-top: 0.5rem;
+      font-size: 9px;
+      letter-spacing: 0.04em;
     }
 
     .a__caption {
